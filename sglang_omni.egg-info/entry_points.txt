@@ -1,0 +1,3 @@
+[console_scripts]
+sgl-omni = sglang_omni.cli:app
+sgl-omni-router = sglang_omni_router.serve:main
