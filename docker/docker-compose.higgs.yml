@@ -1,0 +1,29 @@
+# Higgs Audio v3 TTS — single-GPU serving.
+#   docker compose -f docker/docker-compose.higgs.yml up --build
+services:
+  higgs-tts:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.higgs
+    image: higgs-tts:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist HF model cache so the 4B weights download only once.
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
+    environment:
+      MODEL_PATH: bosonai/higgs-audio-v3-tts-4b
+      HOST: 0.0.0.0
+      PORT: "8000"
+      # HIGGS_QUANT: fp8        # opt-in FP8 (quality NOT certified)
+      # EXTRA_ARGS: "--decode-mode async"
+      # HF_TOKEN: ${HF_TOKEN}   # only needed for gated repos
+    shm_size: "16gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped

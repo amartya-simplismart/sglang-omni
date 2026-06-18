@@ -1,0 +1,50 @@
+# Higgs Audio v3 TTS server (sglang-omni) — single-GPU serving image.
+#
+# Includes the H200 concurrency tuning (DEFAULT_MAX_CONCURRENCY=32) baked into
+# the source. Model weights are NOT baked in; they download to the mounted HF
+# cache (/root/.cache/huggingface) on first start.
+#
+# Build (context = repo root):
+#   docker build -f docker/Dockerfile.higgs -t higgs-tts:latest .
+# Run:
+#   docker run --gpus all -p 8000:8000 \
+#     -v $HOME/.cache/huggingface:/root/.cache/huggingface \
+#     higgs-tts:latest
+FROM lmsysorg/sglang:dev AS base
+
+# Audio I/O system deps (soundfile/librosa/av need libsndfile + ffmpeg).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libsndfile1 ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install with uv: it honors this project's [tool.uv] override-dependencies
+# (protobuf>=6.31.1,<7), which resolves the descript-audiotools vs
+# s3prl/onnxruntime protobuf conflict that breaks plain `pip install`.
+RUN pip install --no-cache-dir uv
+COPY pyproject.toml README.md ./
+COPY sglang_omni ./sglang_omni
+COPY sglang_omni_router ./sglang_omni_router
+RUN uv pip install --system --break-system-packages --no-cache .
+
+# Serving config
+ENV HF_HOME=/root/.cache/huggingface \
+    MODEL_PATH=bosonai/higgs-audio-v3-tts-4b \
+    HOST=0.0.0.0 \
+    PORT=8000 \
+    # uv pins flashinfer to sglang 0.5.12.post1's version (0.6.11.post1); the
+    # base image's flashinfer-jit-cache is a hair newer. Skip the strict equality
+    # check — the AOT cubins are compatible across this patch delta.
+    FLASHINFER_DISABLE_VERSION_CHECK=1
+# FP8 weight quant is OFF by default (bf16). To A/B it: -e HIGGS_QUANT=fp8
+#   NOTE: FP8 audio quality is NOT certified — validate before enabling.
+
+EXPOSE 8000
+
+# Liveness: the server exposes /health once all stages are up.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --retries=3 \
+    CMD curl -fsS http://localhost:${PORT}/health || exit 1
+
+# Shell form so ${MODEL_PATH}/${HOST}/${PORT} expand at runtime.
+ENTRYPOINT ["/bin/bash", "-lc", "exec sgl-omni serve --model-path ${MODEL_PATH} --host ${HOST} --port ${PORT} ${EXTRA_ARGS}"]
