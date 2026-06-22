@@ -64,6 +64,62 @@ _BUCKET_INTER_CHUNK = (
 )
 
 
+class PrometheusLogger:
+    def __init__(self, *, registry: CollectorRegistry):
+        from prometheus_client import Counter, Gauge, Histogram
+
+        self.inference_count = Counter(
+            "ss_inference_count_total", "Number of inferences performed", registry=registry
+        )
+
+        self.compute_preprocess_duration_s = Histogram(
+            "ss_inference_compute_preprocess_duration_s",
+            "Time spent preprocessing (s)",
+            registry=registry,
+        )
+
+        self.compute_infer_duration_s = Histogram(
+            "ss_inference_compute_infer_duration_s",
+            "Time spent performing inference (s)",
+            registry=registry,
+        )
+
+        self.compute_postprocess_duration_s = Histogram(
+            "ss_inference_compute_postprocess_duration_s",
+            "Time spent postprocessing (s)",
+            registry=registry,
+        )
+
+        self.request_bytes = Histogram(
+            "ss_inference_request_bytes", "Request size (bytes)", registry=registry
+        )
+
+        self.response_bytes = Histogram(
+            "ss_inference_response_bytes", "Response size (bytes)", registry=registry
+        )
+
+        self.num_active_requests = Gauge(
+            "ss_active_requests",
+            "Number of inference requests currently being processed",
+            registry=registry,
+        )
+
+        self.inference_latency = Histogram(
+            "ss_inference_latency_s", "Latency of inference requests (s)", registry=registry
+        )
+
+    def process(self, key, value):
+        from prometheus_client import Counter, Gauge, Histogram
+
+        metric_attr = getattr(self, key)
+        if isinstance(metric_attr, Histogram):
+            metric_attr.observe(value)
+        elif isinstance(metric_attr, Counter):
+            metric_attr.inc()
+        elif isinstance(metric_attr, Gauge):
+            metric_attr.set(value)
+
+
 class ServerMetricsCollector:
     """Custom collector that snapshots server health into Prometheus metrics."""
 
@@ -184,46 +240,7 @@ class ServerMetrics:
         )
 
 
-        self.ss_inference_count_total = Counter(
-            'ss_inference_count_total',
-            'Number of inferences performed',
-            registry=self.registry,
-        )
-        self.ss_inference_compute_preprocess_duration_s = Histogram(
-            'ss_inference_compute_preprocess_duration_s',
-            'Time spent preprocessing (s)',
-            registry=self.registry,
-        )
-        self.ss_inference_compute_infer_duration_s = Histogram(
-            'ss_inference_compute_infer_duration_s',
-            'Time spent performing inference (s)',
-            registry=self.registry,
-        )
-        self.ss_inference_compute_postprocess_duration_s = Histogram(
-            'ss_inference_compute_postprocess_duration_s',
-            'Time spent postprocessing (s)',
-            registry=self.registry,
-        )
-        self.ss_inference_request_bytes = Histogram(
-            'ss_inference_request_bytes',
-            'Request size (bytes)',
-            registry=self.registry,
-        )
-        self.ss_inference_response_bytes = Histogram(
-            'ss_inference_response_bytes',
-            'Response size (bytes)',
-            registry=self.registry,
-        )
-        self.ss_active_requests = Gauge(
-            'ss_active_requests',
-            'Number of inference requests currently being processed',
-            registry=self.registry,
-        )
-        self.ss_inference_latency_s = Histogram(
-            'ss_inference_latency_s',
-            'Latency of inference requests (s)',
-            registry=self.registry,
-        )
+        self.prometheus_logger = PrometheusLogger(registry=self.registry)
 
     def bind_app(self, app: FastAPI) -> None:
         self.app = app
@@ -257,7 +274,7 @@ class PrometheusMetricsMiddleware:
         self.metrics.http_requests_total.labels(**labels).inc()
         self.metrics.http_requests_active.labels(**labels).inc()
         if observe_ss_metrics:
-            self.metrics.ss_active_requests.inc()
+            self.metrics.prometheus_logger.num_active_requests.inc()
 
         start = time.perf_counter()
         status_code = '500'
@@ -291,8 +308,8 @@ class PrometheusMetricsMiddleware:
                         )
                         if observe_ss_metrics:
                             first_body_elapsed = elapsed
-                            self.metrics.ss_inference_compute_preprocess_duration_s.observe(
-                                elapsed
+                            self.metrics.prometheus_logger.process(
+                                'compute_preprocess_duration_s', elapsed
                             )
                         first_body_seen = True
                     elif last_chunk_time is not None:
@@ -365,16 +382,17 @@ class PrometheusMetricsMiddleware:
             total_elapsed
         )
         if observe_ss_metrics:
-            self.metrics.ss_active_requests.dec()
-            self.metrics.ss_inference_request_bytes.observe(float(request_bytes))
-            self.metrics.ss_inference_response_bytes.observe(float(response_bytes))
-            self.metrics.ss_inference_latency_s.observe(total_elapsed)
-            self.metrics.ss_inference_compute_infer_duration_s.observe(
-                max(total_elapsed - (first_body_elapsed or 0.0), 0.0)
+            self.metrics.prometheus_logger.num_active_requests.dec()
+            self.metrics.prometheus_logger.process('request_bytes', float(request_bytes))
+            self.metrics.prometheus_logger.process('response_bytes', float(response_bytes))
+            self.metrics.prometheus_logger.process('inference_latency', total_elapsed)
+            self.metrics.prometheus_logger.process(
+                'compute_infer_duration_s',
+                max(total_elapsed - (first_body_elapsed or 0.0), 0.0),
             )
-            self.metrics.ss_inference_compute_postprocess_duration_s.observe(0.0)
+            self.metrics.prometheus_logger.process('compute_postprocess_duration_s', 0.0)
             if not status_code.startswith('5'):
-                self.metrics.ss_inference_count_total.inc()
+                self.metrics.prometheus_logger.process('inference_count', 1)
 
 
 def build_server_metrics_registry(
