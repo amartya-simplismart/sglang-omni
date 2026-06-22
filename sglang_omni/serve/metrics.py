@@ -183,6 +183,48 @@ class ServerMetrics:
             registry=self.registry,
         )
 
+
+        self.ss_inference_count_total = Counter(
+            'ss_inference_count_total',
+            'Number of inferences performed',
+            registry=self.registry,
+        )
+        self.ss_inference_compute_preprocess_duration_s = Histogram(
+            'ss_inference_compute_preprocess_duration_s',
+            'Time spent preprocessing (s)',
+            registry=self.registry,
+        )
+        self.ss_inference_compute_infer_duration_s = Histogram(
+            'ss_inference_compute_infer_duration_s',
+            'Time spent performing inference (s)',
+            registry=self.registry,
+        )
+        self.ss_inference_compute_postprocess_duration_s = Histogram(
+            'ss_inference_compute_postprocess_duration_s',
+            'Time spent postprocessing (s)',
+            registry=self.registry,
+        )
+        self.ss_inference_request_bytes = Histogram(
+            'ss_inference_request_bytes',
+            'Request size (bytes)',
+            registry=self.registry,
+        )
+        self.ss_inference_response_bytes = Histogram(
+            'ss_inference_response_bytes',
+            'Response size (bytes)',
+            registry=self.registry,
+        )
+        self.ss_active_requests = Gauge(
+            'ss_active_requests',
+            'Number of inference requests currently being processed',
+            registry=self.registry,
+        )
+        self.ss_inference_latency_s = Histogram(
+            'ss_inference_latency_s',
+            'Latency of inference requests (s)',
+            registry=self.registry,
+        )
+
     def bind_app(self, app: FastAPI) -> None:
         self.app = app
 
@@ -210,18 +252,31 @@ class PrometheusMetricsMiddleware:
         endpoint = self.metrics.resolve_path(scope)
         method = scope.get('method', 'UNKNOWN')
         labels = {'endpoint': endpoint, 'method': method}
+        observe_ss_metrics = endpoint == '/v1/audio/speech' and method == 'POST'
 
         self.metrics.http_requests_total.labels(**labels).inc()
         self.metrics.http_requests_active.labels(**labels).inc()
+        if observe_ss_metrics:
+            self.metrics.ss_active_requests.inc()
 
         start = time.perf_counter()
         status_code = '500'
         finalized = False
         first_body_seen = False
+        first_body_elapsed: float | None = None
         last_chunk_time: float | None = None
+        request_bytes = 0
+        response_bytes = 0
+
+        async def receive_wrapper():
+            nonlocal request_bytes
+            message = await receive()
+            if observe_ss_metrics and message.get('type') == 'http.request':
+                request_bytes += len(message.get('body', b'') or b'')
+            return message
 
         async def send_wrapper(message):
-            nonlocal status_code, finalized, first_body_seen, last_chunk_time
+            nonlocal status_code, finalized, first_body_seen, first_body_elapsed, last_chunk_time, response_bytes
 
             if message['type'] == 'http.response.start':
                 status_code = str(message['status'])
@@ -230,9 +285,15 @@ class PrometheusMetricsMiddleware:
                 body = message.get('body', b'') or b''
                 if body:
                     if not first_body_seen:
+                        elapsed = now - start
                         self.metrics.http_time_to_first_byte_seconds.labels(**labels).observe(
-                            now - start
+                            elapsed
                         )
+                        if observe_ss_metrics:
+                            first_body_elapsed = elapsed
+                            self.metrics.ss_inference_compute_preprocess_duration_s.observe(
+                                elapsed
+                            )
                         first_body_seen = True
                     elif last_chunk_time is not None:
                         self.metrics.http_inter_chunk_latency_seconds.labels(**labels).observe(
@@ -241,31 +302,79 @@ class PrometheusMetricsMiddleware:
                     last_chunk_time = now
 
                 if not message.get('more_body', False):
-                    self._finalize(labels, status_code, start)
+                    self._finalize(
+                        labels,
+                        status_code,
+                        start,
+                        observe_ss_metrics=observe_ss_metrics,
+                        first_body_elapsed=first_body_elapsed,
+                        request_bytes=request_bytes,
+                        response_bytes=response_bytes,
+                    )
                     finalized = True
 
+            if observe_ss_metrics and message['type'] == 'http.response.body':
+                response_bytes += len(message.get('body', b'') or b'')
             await send(message)
 
         try:
-            await self.app(scope, receive, send_wrapper)
+            await self.app(scope, receive_wrapper, send_wrapper)
         except Exception:
             if not finalized:
-                self._finalize(labels, '500', start)
+                self._finalize(
+                    labels,
+                    '500',
+                    start,
+                    observe_ss_metrics=observe_ss_metrics,
+                    first_body_elapsed=first_body_elapsed,
+                    request_bytes=request_bytes,
+                    response_bytes=response_bytes,
+                )
             raise
         finally:
             if not finalized:
-                self._finalize(labels, status_code, start)
+                self._finalize(
+                    labels,
+                    status_code,
+                    start,
+                    observe_ss_metrics=observe_ss_metrics,
+                    first_body_elapsed=first_body_elapsed,
+                    request_bytes=request_bytes,
+                    response_bytes=response_bytes,
+                )
 
-    def _finalize(self, labels: dict[str, str], status_code: str, start: float) -> None:
+    def _finalize(
+        self,
+        labels: dict[str, str],
+        status_code: str,
+        start: float,
+        *,
+        observe_ss_metrics: bool,
+        first_body_elapsed: float | None,
+        request_bytes: int,
+        response_bytes: int,
+    ) -> None:
         self.metrics.http_responses_total.labels(
             endpoint=labels['endpoint'],
             method=labels['method'],
             status_code=status_code,
         ).inc()
         self.metrics.http_requests_active.labels(**labels).dec()
+        total_elapsed = time.perf_counter() - start
         self.metrics.http_e2e_request_latency_seconds.labels(**labels).observe(
-            time.perf_counter() - start
+            total_elapsed
         )
+        if observe_ss_metrics:
+            self.metrics.ss_active_requests.dec()
+            self.metrics.ss_inference_request_bytes.observe(float(request_bytes))
+            self.metrics.ss_inference_response_bytes.observe(float(response_bytes))
+            self.metrics.ss_inference_latency_s.observe(total_elapsed)
+            self.metrics.ss_inference_compute_infer_duration_s.observe(
+                max(total_elapsed - (first_body_elapsed or 0.0), 0.0)
+            )
+            self.metrics.ss_inference_compute_postprocess_duration_s.observe(0.0)
+            if not status_code.startswith('5'):
+                self.metrics.ss_inference_count_total.inc()
 
 
 def build_server_metrics_registry(
