@@ -991,6 +991,7 @@ def test_admin_routes_env_key_is_used_when_no_explicit_key(monkeypatch) -> None:
             "/update_weights_from_distributed",
             {"names": [], "dtypes": [], "shapes": []},
         ),
+        
     ],
 )
 def test_unimplemented_weight_update_endpoints_return_501(
