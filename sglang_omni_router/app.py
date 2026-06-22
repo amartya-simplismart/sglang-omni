@@ -21,8 +21,10 @@ from sglang_omni.http.admin_auth import (
     resolve_admin_api_key,
 )
 from sglang_omni.http.favicon import register_favicon
+from sglang_omni.serve.metrics import build_metrics_response
 from sglang_omni_router.config import RouterConfig, WorkerConfig
 from sglang_omni_router.health import HealthChecker
+from sglang_omni_router.metrics import build_router_metrics_registry
 from sglang_omni_router.proxy import ProxyHandler, filter_request_headers
 from sglang_omni_router.selector import WorkerSelector
 from sglang_omni_router.worker import (
@@ -89,6 +91,7 @@ def create_app(
         app.state.health_checker = health_checker
         app.state.proxy = proxy
         app.state.admin_update_lock = asyncio.Lock()
+        app.state.metrics_registry = build_router_metrics_registry(workers)
         await health_checker.start()
         try:
             yield
@@ -158,6 +161,10 @@ def register_routes(
             available_status="healthy",
             unavailable_status="unhealthy",
         )
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        return build_metrics_response(app.state.metrics_registry)
 
     @app.post("/workers")
     async def create_worker(request: Request) -> JSONResponse:
