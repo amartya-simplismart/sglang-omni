@@ -78,9 +78,34 @@ _REF_CODE_CACHE_MAX_BYTES = 256 * 1024 * 1024
 _REF_WAVEFORM_CACHE_MAX_ITEMS = 256
 _REF_WAVEFORM_CACHE_MAX_BYTES = 512 * 1024 * 1024
 
-# Measured on H200: throughput still scales ~linearly past c=16 (GPU not
-# saturated), so raise the cap so c<=32 runs in one batch instead of queueing.
-DEFAULT_MAX_CONCURRENCY = 32
+def _resolve_higgs_max_concurrency(default: int = 16) -> int:
+    """Resolve the Higgs concurrency cap from env with validation."""
+    raw = os.environ.get("HIGGS_MAX_CONCURRENCY")
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid HIGGS_MAX_CONCURRENCY=%r; falling back to default=%d",
+            raw,
+            default,
+        )
+        return default
+    if value < 1:
+        logger.warning(
+            "Non-positive HIGGS_MAX_CONCURRENCY=%r; falling back to default=%d",
+            raw,
+            default,
+        )
+        return default
+    return value
+
+
+# Historically Higgs has been tuned around 16 effective in-flight requests on
+# some hardware, but the serving cap is intentionally configurable so images
+# and deployments can opt into higher concurrency explicitly.
+DEFAULT_MAX_CONCURRENCY = _resolve_higgs_max_concurrency()
 
 
 def _reference_audio_cache_key(reference_audio: Any) -> str | None:
@@ -352,12 +377,6 @@ def create_sglang_tts_engine_executor(
         # build_sglang_higgs_request); shared -100 placeholder prefixes from
         # different ref audios can't cross-contaminate the KV tree.
     }
-    # A/B knob: HIGGS_QUANT=fp8 enables sglang online FP8 weight quant on the
-    # dense Qwen3 backbone (custom multi-codebook head/embedding stay bf16).
-    _quant = os.environ.get("HIGGS_QUANT")
-    if _quant:
-        overrides["quantization"] = _quant
-
     if server_args_overrides:
         overrides.update(server_args_overrides)
 
