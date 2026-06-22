@@ -1,7 +1,7 @@
 # Higgs Audio v3 TTS server (sglang-omni) — single-GPU serving image.
 #
-# Includes the H200 concurrency tuning (DEFAULT_MAX_CONCURRENCY=32) baked into
-# the source. Model weights are NOT baked in; they download to the mounted HF
+# Defaults the container to HIGGS_MAX_CONCURRENCY=32 for H200-style
+# deployments. Model weights are NOT baked in; they download to the mounted HF
 # cache (/root/.cache/huggingface) on first start.
 #
 # Build (context = repo root):
@@ -33,6 +33,7 @@ ENV HF_HOME=/root/.cache/huggingface \
     MODEL_PATH=bosonai/higgs-audio-v3-tts-4b \
     HOST=0.0.0.0 \
     PORT=8000 \
+    HIGGS_MAX_CONCURRENCY=40 \
     # uv pins flashinfer to sglang 0.5.12.post1's version (0.6.11.post1); the
     # base image's flashinfer-jit-cache is a hair newer. Skip the strict equality
     # check — the AOT cubins are compatible across this patch delta.
