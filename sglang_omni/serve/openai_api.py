@@ -10,7 +10,6 @@ Provides the following endpoints:
 - GET  /health               — Health check
 - WS   /v1/realtime          — OpenAI-compatible Realtime API (when enabled)
 """
-
 from __future__ import annotations
 
 import asyncio
