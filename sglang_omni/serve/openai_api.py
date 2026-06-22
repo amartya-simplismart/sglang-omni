@@ -55,6 +55,11 @@ from sglang_omni.http.admin_auth import (
     resolve_admin_api_key,
 )
 from sglang_omni.http.favicon import register_favicon
+from sglang_omni.serve.metrics import (
+    PrometheusMetricsMiddleware,
+    build_metrics_response,
+    build_server_metrics_registry,
+)
 from sglang_omni.serve.protocol import (
     AdminRequestBase,
     ChatCompletionAudio,
@@ -141,11 +146,22 @@ def create_app(
         allowed_media_domains=allowed_media_domains,
     )
 
+    app.state.server_metrics = build_server_metrics_registry(
+        health_provider=client.health,
+        model_name_provider=lambda: app.state.model_name,
+    )
+    app.state.server_metrics.bind_app(app)
+    app.add_middleware(
+        PrometheusMetricsMiddleware,
+        metrics=app.state.server_metrics,
+    )
+
     resolved_key = resolve_admin_api_key(admin_api_key)
 
     # Register all routes
     register_favicon(app)
     _register_health(app)
+    _register_metrics(app)
     _register_models(app)
     _register_admin(app, resolved_key)
     _register_chat_completions(app)
@@ -172,6 +188,12 @@ def _register_health(app: FastAPI) -> None:
             },
             status_code=status_code,
         )
+
+
+def _register_metrics(app: FastAPI) -> None:
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        return build_metrics_response(app.state.server_metrics.registry)
 
 
 def _register_models(app: FastAPI) -> None:
