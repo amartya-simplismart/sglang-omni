@@ -164,16 +164,10 @@ def test_metrics_exposes_prometheus_payload() -> None:
     assert response.status_code == 200
     assert "text/plain" in response.headers["content-type"]
     body = response.text
-    assert "sglang_omni_server_up 1.0" in body
-    assert "sglang_omni_server_info{entry_stage=\"preprocess\",model_name=\"higgs\"} 1.0" in body
-    assert "sglang_omni_server_requests{kind=\"total\"} 7.0" in body
-    assert "sglang_omni_server_requests{kind=\"pending_completions\"} 2.0" in body
-    assert "sglang_omni_server_request_states{state=\"completed\"} 5.0" in body
-    assert "sglang_omni_http_requests_total{endpoint=\"/v1/models\",method=\"GET\"} 1.0" in body
-    assert "sglang_omni_http_responses_total{endpoint=\"/v1/models\",method=\"GET\",status_code=\"200\"} 1.0" in body
-    assert "sglang_omni_http_requests_active{endpoint=\"/v1/models\",method=\"GET\"} 0.0" in body
-    assert "sglang_omni_http_e2e_request_latency_seconds_count{endpoint=\"/v1/models\",method=\"GET\"} 1.0" in body
-
+    assert "ss_active_requests 0.0" in body
+    assert "ss_inference_count_total 0.0" in body
+    assert "ss_inference_latency_s_count 0.0" in body
+    assert "sglang_omni_" not in body
 
 def test_streaming_metrics_expose_ttfb_and_inter_chunk_latency() -> None:
     app = create_app(MultiChunkStreamingSpeechClient(), model_name="higgs")
@@ -194,12 +188,14 @@ def test_streaming_metrics_expose_ttfb_and_inter_chunk_latency() -> None:
         metrics = client.get("/metrics")
 
     body = metrics.text
-    assert "sglang_omni_http_requests_total{endpoint=\"/v1/audio/speech\",method=\"POST\"} 1.0" in body
-    assert "sglang_omni_http_responses_total{endpoint=\"/v1/audio/speech\",method=\"POST\",status_code=\"200\"} 1.0" in body
-    assert "sglang_omni_http_e2e_request_latency_seconds_count{endpoint=\"/v1/audio/speech\",method=\"POST\"} 1.0" in body
-    assert "sglang_omni_http_time_to_first_byte_seconds_count{endpoint=\"/v1/audio/speech\",method=\"POST\"} 1.0" in body
-    assert "sglang_omni_http_inter_chunk_latency_seconds_count{endpoint=\"/v1/audio/speech\",method=\"POST\"} 1.0" in body
-
+    assert "ss_inference_count_total 1.0" in body
+    assert "ss_active_requests 0.0" in body
+    assert "ss_inference_latency_s_count 1.0" in body
+    assert "ss_inference_compute_preprocess_duration_s_count 1.0" in body
+    assert "ss_inference_compute_infer_duration_s_count 1.0" in body
+    assert "ss_inference_compute_postprocess_duration_s_count 1.0" in body
+    assert "ss_inference_request_bytes_count 1.0" in body
+    assert "ss_inference_response_bytes_count 1.0" in body
 
 class MultiChunkStreamingSpeechClient:
     def health(self) -> dict[str, Any]:
@@ -991,7 +987,6 @@ def test_admin_routes_env_key_is_used_when_no_explicit_key(monkeypatch) -> None:
             "/update_weights_from_distributed",
             {"names": [], "dtypes": [], "shapes": []},
         ),
-        
     ],
 )
 def test_unimplemented_weight_update_endpoints_return_501(

@@ -163,15 +163,14 @@ def main() -> int:
         )
         after = scrape_metrics(metrics_url)
 
-        endpoint_labels = {'endpoint': '/v1/audio/speech', 'method': 'POST'}
-        delta_requests = sample_value(after, 'sglang_omni_http_requests_total', **endpoint_labels) - sample_value(before, 'sglang_omni_http_requests_total', **endpoint_labels)
-        delta_responses = sample_value(after, 'sglang_omni_http_responses_total', status_code='200', **endpoint_labels) - sample_value(before, 'sglang_omni_http_responses_total', status_code='200', **endpoint_labels)
-        delta_e2e_count = sample_value(after, 'sglang_omni_http_e2e_request_latency_seconds_count', **endpoint_labels) - sample_value(before, 'sglang_omni_http_e2e_request_latency_seconds_count', **endpoint_labels)
-        delta_e2e_sum = sample_value(after, 'sglang_omni_http_e2e_request_latency_seconds_sum', **endpoint_labels) - sample_value(before, 'sglang_omni_http_e2e_request_latency_seconds_sum', **endpoint_labels)
-        delta_ttfb_count = sample_value(after, 'sglang_omni_http_time_to_first_byte_seconds_count', **endpoint_labels) - sample_value(before, 'sglang_omni_http_time_to_first_byte_seconds_count', **endpoint_labels)
-        delta_ttfb_sum = sample_value(after, 'sglang_omni_http_time_to_first_byte_seconds_sum', **endpoint_labels) - sample_value(before, 'sglang_omni_http_time_to_first_byte_seconds_sum', **endpoint_labels)
-        delta_inter_chunk_count = sample_value(after, 'sglang_omni_http_inter_chunk_latency_seconds_count', **endpoint_labels) - sample_value(before, 'sglang_omni_http_inter_chunk_latency_seconds_count', **endpoint_labels)
-        final_active = sample_value(after, 'sglang_omni_http_requests_active', **endpoint_labels)
+        delta_requests = sample_value(after, 'ss_inference_count_total') - sample_value(before, 'ss_inference_count_total')
+        delta_responses = delta_requests
+        delta_e2e_count = sample_value(after, 'ss_inference_latency_s_count') - sample_value(before, 'ss_inference_latency_s_count')
+        delta_e2e_sum = sample_value(after, 'ss_inference_latency_s_sum') - sample_value(before, 'ss_inference_latency_s_sum')
+        delta_ttfb_count = sample_value(after, 'ss_inference_compute_preprocess_duration_s_count') - sample_value(before, 'ss_inference_compute_preprocess_duration_s_count')
+        delta_ttfb_sum = sample_value(after, 'ss_inference_compute_preprocess_duration_s_sum') - sample_value(before, 'ss_inference_compute_preprocess_duration_s_sum')
+        delta_inter_chunk_count = sample_value(after, 'ss_inference_compute_postprocess_duration_s_count') - sample_value(before, 'ss_inference_compute_postprocess_duration_s_count')
+        final_active = sample_value(after, 'ss_active_requests')
 
         prom_e2e_avg = (delta_e2e_sum / delta_e2e_count) if delta_e2e_count > 0 else 0.0
         prom_ttfb_avg = (delta_ttfb_sum / delta_ttfb_count) if delta_ttfb_count > 0 else 0.0
