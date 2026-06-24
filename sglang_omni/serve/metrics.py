@@ -20,6 +20,8 @@ from prometheus_client import (
 )
 from starlette.routing import Match
 
+_MILLISECONDS_PER_SECOND = 1000.0
+
 
 class PrometheusLogger:
     def __init__(self, *, registry: CollectorRegistry):
@@ -145,12 +147,14 @@ class PrometheusMetricsMiddleware:
                         if observe_ss_metrics:
                             first_body_elapsed = elapsed
                             self.metrics.prometheus_logger.process(
-                                'compute_preprocess_duration_s', elapsed
+                                'compute_preprocess_duration_s',
+                                elapsed * _MILLISECONDS_PER_SECOND
                             )
                         first_body_seen = True
                     elif last_chunk_time is not None and observe_ss_metrics:
                         self.metrics.prometheus_logger.process(
-                            'compute_postprocess_duration_s', now - last_chunk_time
+                            'compute_postprocess_duration_s',
+                            (now - last_chunk_time) * _MILLISECONDS_PER_SECOND
                         )
                     last_chunk_time = now
 
@@ -206,10 +210,13 @@ class PrometheusMetricsMiddleware:
             self.metrics.prometheus_logger.num_active_requests.dec()
             self.metrics.prometheus_logger.process('request_bytes', float(request_bytes))
             self.metrics.prometheus_logger.process('response_bytes', float(response_bytes))
-            self.metrics.prometheus_logger.process('inference_latency', total_elapsed)
+            self.metrics.prometheus_logger.process(
+                'inference_latency', total_elapsed * _MILLISECONDS_PER_SECOND
+            )
             self.metrics.prometheus_logger.process(
                 'compute_infer_duration_s',
-                max(total_elapsed - (first_body_elapsed or 0.0), 0.0),
+                max(total_elapsed - (first_body_elapsed or 0.0), 0.0)
+                * _MILLISECONDS_PER_SECOND,
             )
             self.metrics.prometheus_logger.process('inference_count')
 
