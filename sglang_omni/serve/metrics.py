@@ -20,7 +20,7 @@ from prometheus_client import (
 )
 from starlette.routing import Match
 
-_MILLISECONDS_PER_SECOND = 1000.0
+_MILLISECONDS_PER_SECOND = 1.0
 
 
 class PrometheusLogger:
